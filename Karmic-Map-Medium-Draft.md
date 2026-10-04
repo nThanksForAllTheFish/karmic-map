@@ -56,4 +56,5 @@ I have come to think of the map as a memorial rather than a ranking. That framin
 
 The code, the design document and a live copy of the viewer are on GitHub. The two hand-curated tables are marked as drafts, and if you know the literature on any of those sites, corrections are welcome.
 
-*[Link to repository and Pages viewer]*
+Repository: https://github.com/nThanksForAllTheFish/karmic-map
+Live viewer: https://nthanksforallthefish.github.io/karmic-map/
