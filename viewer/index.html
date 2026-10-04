@@ -22,7 +22,11 @@
   #legend .bar { height:10px; width:220px; background:linear-gradient(90deg,#1b0c41,#4a0c6b,#781c6d,#a52c60,#cf4446,#ed6925,#fb9b06,#f7d13d,#fcffa4); margin:6px 0 2px; }
   #legend .ticks { display:flex; justify-content:space-between; font-variant-numeric: tabular-nums; color:#aaa; }
   #status { position:absolute; left:12px; bottom:28px; font-size:9pt; color:#888; }
-  select, button { background:#1c1c22; color:#ddd; border:1px solid #444; font: inherit; font-size:10pt; padding:2px 6px; }
+  select, button { background:#1c1c22; color:#ddd; border:1px solid #444; font: inherit; font-size:10pt; padding:2px 6px; white-space:nowrap; }
+  .row.presets { align-items:flex-start; }
+  .row.presets .buttons { display:flex; flex-wrap:wrap; gap:4px; flex:1; }
+  .row.presets button { font-size:9pt; padding:1px 5px; }
+  .row .opt { width:auto; flex:1; }
   .small { font-size:9pt; color:#888; }
 </style>
 </head>
@@ -39,15 +43,17 @@
     <label style="width:auto">Opacity</label><input type="range" id="op" min="10" max="100" value="75" style="width:80px">
   </div>
   <div class="row"><label>Layers</label>
-    <input type="checkbox" id="ocean" checked><label for="ocean" style="width:auto">ocean transits (Middle Passage)</label>
+    <input type="checkbox" id="ocean" checked><label for="ocean" class="opt">ocean transits (Middle Passage)</label>
   </div>
   <div class="row"><label></label>
-    <input type="checkbox" id="names" checked><label for="names" style="width:auto">present-day country names (zoom ≥ 2.5)</label>
+    <input type="checkbox" id="names" checked><label for="names" class="opt">country names (zoom ≥ 2.5)</label>
   </div>
-  <div class="row"><label>Presets</label>
-    <button data-w="-1000000,2025">all</button><button data-w="-1000000,-3001">prehistory</button><button data-w="-3000,1499">3000 BCE–1500</button>
-    <button data-w="1500,1800">1500–1800</button><button data-w="1800,1900">1800–1900</button>
-    <button data-w="1939,1946">1939–45</button><button data-w="1989,2025">1989–</button>
+  <div class="row presets"><label>Presets</label>
+    <div class="buttons">
+      <button data-w="-1000000,2025">all</button><button data-w="-1000000,-3001">prehistory</button><button data-w="-3000,1499">3000 BCE – 1500</button>
+      <button data-w="1500,1800">1500 – 1800</button><button data-w="1800,1900">1800 – 1900</button>
+      <button data-w="1939,1946">1939 – 45</button><button data-w="1989,2025">1989 – now</button>
+    </div>
   </div>
   <p class="small">Sources in this build: UCDP GED 25.1 (one-sided and civilian deaths, 1989–2024); Trans-Atlantic Slave Trade Database 2019 (embarkation, Middle Passage, bondage); Wikidata camps with recorded death counts; Seguin–Rigby lynching supplement 1883–1941; a curated table of bioarchaeological sites from 800 kya onward (forensic evidence, genus Homo, combat assemblages excluded); Colonial Frontier Massacres in Australia 1788–1930 (Ryan et al., University of Newcastle, 438 sites); a draft curated table for Aotearoa New Zealand (Musket Wars, New Zealand Wars, Moriori, Parihaka). Polygon and route footprints are drawn at H3 resolution 4 (about 1,770 km² per cell); point sites at resolution 7 when zoomed in. Souls are counted per episode, so one enslaved person appears in up to three episodes.</p>
   <p class="small"><a href="#" id="toggle" style="color:#9ab">hide panel</a></p>
