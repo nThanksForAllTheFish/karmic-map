@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>A karmic map of the Earth — prototype</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="https://unpkg.com/h3-js@4.1.0/dist/h3-js.umd.js"></script>
+<script src="https://unpkg.com/deck.gl@9.0.35/dist.min.js"></script>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<style>
+  html, body { margin:0; height:100%; background:#0b0b0e; color:#ddd; font: 11pt Georgia, 'Times New Roman', serif; }
+  #map { position:absolute; inset:0; }
+  #panel { position:absolute; left:12px; top:12px; width:340px; background:rgba(14,14,18,0.88); padding:12px 14px; border:1px solid #333; }
+  #panel h1 { font-size:12pt; margin:0 0 6px; font-weight:bold; }
+  #panel p { margin:4px 0; font-size:10pt; color:#bbb; }
+  .row { display:flex; align-items:center; gap:8px; margin:6px 0; font-size:10pt; }
+  .row label { width:70px; color:#aaa; }
+  input[type=range] { flex:1; }
+  #years { font-variant-numeric: tabular-nums; }
+  #legend { position:absolute; right:12px; bottom:28px; background:rgba(14,14,18,0.88); padding:10px 12px; border:1px solid #333; font-size:10pt; }
+  #legend .bar { height:10px; width:220px; background:linear-gradient(90deg,#1b0c41,#4a0c6b,#781c6d,#a52c60,#cf4446,#ed6925,#fb9b06,#f7d13d,#fcffa4); margin:6px 0 2px; }
+  #legend .ticks { display:flex; justify-content:space-between; font-variant-numeric: tabular-nums; color:#aaa; }
+  #status { position:absolute; left:12px; bottom:28px; font-size:9pt; color:#888; }
+  select, button { background:#1c1c22; color:#ddd; border:1px solid #444; font: inherit; font-size:10pt; padding:2px 6px; }
+  .small { font-size:9pt; color:#888; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="panel">
+  <h1>A karmic map of the Earth</h1>
+  <p>Prototype. Each hexagon carries the summed score of every recorded soul whose suffering fell inside it, for the chosen years. Colour is log10 of the score.</p>
+  <div class="row"><label>From</label><input type="range" id="t0" min="0" max="1000" value="0"></div>
+  <div class="row"><label>To</label><input type="range" id="t1" min="0" max="1000" value="1000"></div>
+  <div class="row"><label>Window</label><span id="years"></span></div>
+  <div class="row"><label>Estimate</label>
+    <select id="est"><option value="c">central</option><option value="l">low</option><option value="h">high</option></select>
+    <label style="width:auto">Opacity</label><input type="range" id="op" min="10" max="100" value="75" style="width:80px">
+  </div>
+  <div class="row"><label>Layers</label>
+    <input type="checkbox" id="ocean" checked><label for="ocean" style="width:auto">ocean transits (Middle Passage)</label>
+  </div>
+  <div class="row"><label></label>
+    <input type="checkbox" id="names" checked><label for="names" style="width:auto">present-day country names (zoom ≥ 2.5)</label>
+  </div>
+  <div class="row"><label>Presets</label>
+    <button data-w="-1000000,2025">all</button><button data-w="-1000000,-3001">prehistory</button><button data-w="-3000,1499">3000 BCE–1500</button>
+    <button data-w="1500,1800">1500–1800</button><button data-w="1800,1900">1800–1900</button>
+    <button data-w="1939,1946">1939–45</button><button data-w="1989,2025">1989–</button>
+  </div>
+  <p class="small">Sources in this build: UCDP GED 25.1 (one-sided and civilian deaths, 1989–2024); Trans-Atlantic Slave Trade Database 2019 (embarkation, Middle Passage, bondage); Wikidata camps with recorded death counts; Seguin–Rigby lynching supplement 1883–1941; a curated table of bioarchaeological sites from 800 kya onward (forensic evidence, genus Homo, combat assemblages excluded); Colonial Frontier Massacres in Australia 1788–1930 (Ryan et al., University of Newcastle, 438 sites); a draft curated table for Aotearoa New Zealand (Musket Wars, New Zealand Wars, Moriori, Parihaka). Polygon and route footprints are drawn at H3 resolution 4 (about 1,770 km² per cell); point sites at resolution 7 when zoomed in. Souls are counted per episode, so one enslaved person appears in up to three episodes.</p>
+  <p class="small"><a href="#" id="toggle" style="color:#9ab">hide panel</a></p>
+</div>
+<div id="legend"><div>score per hexagon (log10)</div><div class="bar"></div><div class="ticks" id="ticks"></div></div>
+<div id="status">loading…</div>
+
+<script>window.DATA_BASE = 'data/';</script>
+<script>
+const {DeckGL, H3HexagonLayer, TextLayer} = deck;
+const COUNTRIES = (window.EMBEDDED && window.EMBEDDED.countries)
+  ? Promise.resolve(window.EMBEDDED.countries) : fetch('countries.json').then(r => r.json());
+// DATA_BASE lets the same page run from the repo (../out/viewer/) or from a GitHub Pages copy (data/)
+const DATA_BASE = window.DATA_BASE || '../out/viewer/';
+const META = (window.EMBEDDED && window.EMBEDDED.meta) ? Promise.resolve(window.EMBEDDED.meta) : fetch(DATA_BASE + 'meta.json').then(r => r.json());
+const LAYERS = {};
+const YMIN = -1000000, YMAX = 2025;
+function fmtYear(y) {
+  if (y < -10000) return Math.round((YMAX - y) / 1000).toLocaleString() + ' kya';
+  if (y < 0) return (-y).toLocaleString() + ' BCE';
+  return String(y);
+}
+const ramp = ['#1b0c41','#4a0c6b','#781c6d','#a52c60','#cf4446','#ed6925','#fb9b06','#f7d13d','#fcffa4']
+  .map(h => [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)]);
+
+// time axis: slider position p in [0,1] -> year, log in years-before-present
+const SPAN = Math.log(YMAX - YMIN + 1);
+const posToYear = p => Math.round(YMAX - Math.exp((1 - p) * SPAN) + 1);
+const yearToPos = y => 1 - Math.log(YMAX - y + 1) / SPAN;
+
+// which data layers exist is read from meta.json, so a Pages copy carrying only r2/r3/fine still works
+let AVAILABLE = window.AVAILABLE || ['r2','r3','r4','r5','coarse','fine'];
+async function loadLayer(name) {
+  if (LAYERS[name]) return LAYERS[name];
+  if (window.EMBEDDED && window.EMBEDDED[name]) { LAYERS[name] = window.EMBEDDED[name]; return LAYERS[name]; }
+  document.getElementById('status').textContent = 'loading ' + name + '…';
+  const d = await fetch(`${DATA_BASE}cells_${name}.json`).then(r => r.json());
+  LAYERS[name] = d;
+  return d;
+}
+
+function aggregate(d, y0, y1, est, ocean) {
+  // sum rows whose bin overlaps [y0, y1]; drop sea-route rows when the ocean toggle is off
+  const out = new Map();
+  const n = d.cell.length;
+  for (let i = 0; i < n; i++) {
+    if (!ocean && d.rt[i] === 1) continue;
+    const b = d.bin[i], dy = d.dy[i];
+    if (b + dy <= y0 || b > y1) continue;
+    // fraction of the bin inside the window
+    const lo = Math.max(b, y0), hi = Math.min(b + dy, y1 + 1);
+    const f = Math.max(0, hi - lo) / dy;
+    if (f <= 0) continue;
+    let s = d.score[i];
+    if (est === 'l') s *= d.rl[i];
+    if (est === 'h') s *= d.rh[i];
+    const c = d.cell[i];
+    const o = out.get(c);
+    if (o) { o.score += s * f; o.souls += d.souls[i] * f; o.nsrc = Math.max(o.nsrc, d.nsrc[i]); }
+    else out.set(c, {hex: c, res: d.res[i], score: s * f, souls: d.souls[i] * f, nsrc: d.nsrc[i]});
+  }
+  return Array.from(out.values()).filter(o => o.score > 0);
+}
+
+let vmax = 6;
+function color(score) {
+  const v = Math.log10(Math.max(score, 1));
+  const t = Math.min(v / vmax, 1);
+  const k = t * (ramp.length - 1), i = Math.floor(k), f = k - i;
+  const a = ramp[Math.min(i, ramp.length - 1)], b = ramp[Math.min(i + 1, ramp.length - 1)];
+  return [a[0] + (b[0]-a[0]) * f, a[1] + (b[1]-a[1]) * f, a[2] + (b[2]-a[2]) * f];
+}
+
+function layerFor(zoom) {
+  const has = n => AVAILABLE.includes(n);
+  // zoomed in: a point-free base (polygons and routes) plus the point layer, never both a
+  // full layer and the point layer, which would count the points twice
+  if (zoom >= 7) {
+    const base = has('coarse') ? 'coarse' : has('r3coarse') ? 'r3coarse' : null;
+    if (base && has('fine')) return [base, 'fine'];
+  }
+  // zoomed out: one full layer, falling back to the finest available if a reduced build lacks it
+  const wanted = zoom < 2.2 ? 'r2' : zoom < 3.6 ? 'r3' : zoom < 5.2 ? 'r4' : 'r5';
+  const order = ['r5','r4','r3','r2'];
+  const pick = order.slice(order.indexOf(wanted)).find(has) || order.find(has);
+  return [pick];
+}
+
+const Q = new URLSearchParams(location.search);
+const qn = (k, d) => Q.has(k) ? +Q.get(k) : d;
+const deckgl = new DeckGL({
+  container: 'map',
+  mapStyle: 'https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json',
+  viewState: {longitude: qn('lon', -20), latitude: qn('lat', 15), zoom: qn('zoom', 1.6), minZoom: 1, maxZoom: 12, pitch: 0, bearing: 0},
+  controller: true,
+  layers: [],
+  // controlled view state: deck reports every change and we hand it straight back, so the
+  // zoom the code sees is always the zoom being drawn
+  onViewStateChange: ({viewState}) => { deckgl.setProps({viewState}); scheduleUpdate(viewState.zoom); },
+  getTooltip: ({object}) => object && {
+    html: `<div>score ${Math.round(object.score).toLocaleString()}<br>souls ${Math.round(object.souls).toLocaleString()}<br>sources ${object.nsrc}<br><span style="color:#888">${object.hex} (res ${object.res})</span></div>`,
+    style: {background: 'rgba(14,14,18,0.92)', color: '#ddd', font: '10pt Georgia, serif', padding: '6px 8px', border: '1px solid #333'}
+  }
+});
+
+let curZoom = qn('zoom', 1.6), timer = null;
+document.getElementById('toggle').addEventListener('click', e => {
+  e.preventDefault();
+  const p = document.getElementById('panel');
+  const hidden = p.dataset.hidden === '1';
+  p.dataset.hidden = hidden ? '0' : '1';
+  Array.from(p.children).forEach(ch => { if (!ch.contains(e.target)) ch.style.display = hidden ? '' : 'none'; });
+  e.target.textContent = hidden ? 'hide panel' : 'show panel';
+});
+if (Q.has('panel') && Q.get('panel') === '0') document.getElementById('toggle').click();
+
+function scheduleUpdate(zoom) {
+  if (zoom !== undefined) curZoom = zoom;
+  clearTimeout(timer);
+  timer = setTimeout(update, 120);
+}
+
+async function update() {
+  const p0 = +document.getElementById('t0').value / 1000, p1 = +document.getElementById('t1').value / 1000;
+  const y0 = posToYear(Math.min(p0, p1)), y1 = posToYear(Math.max(p0, p1));
+  document.getElementById('years').textContent = `${fmtYear(y0)} – ${fmtYear(y1)}`;
+  const est = document.getElementById('est').value;
+  const op = +document.getElementById('op').value / 100;
+  const ocean = document.getElementById('ocean').checked;
+  const names = layerFor(curZoom);
+  const datasets = await Promise.all(names.map(loadLayer));
+  const layers = [];
+  let total = 0, souls = 0, cells = 0;
+  datasets.forEach((d, i) => {
+    const rows = aggregate(d, y0, y1, est, ocean);
+    rows.forEach(r => { total += r.score; souls += r.souls; });
+    cells += rows.length;
+    layers.push(new H3HexagonLayer({
+      id: 'hex-' + names[i], data: rows, pickable: true, filled: true, extruded: false, stroked: false,
+      coverage: names[i] === 'fine' ? 1.0 : 0.98, opacity: op,
+      getHexagon: r => r.hex, getFillColor: r => color(r.score),
+      updateTriggers: {getFillColor: [vmax]}
+    }));
+  });
+  // present-day country names above the hexagons once zoomed in a little
+  if (curZoom >= 2.5 && document.getElementById('names').checked) {
+    const countries = await COUNTRIES;
+    // at low zoom keep only the more populous countries so labels do not collide
+    const minPop = curZoom < 3.5 ? 15e6 : curZoom < 4.5 ? 3e6 : 0;
+    layers.push(new TextLayer({
+      id: 'country-names', data: countries.filter(c => c.p >= minPop),
+      getPosition: c => [c.x, c.y], getText: c => c.n,
+      getSize: curZoom < 4 ? 10 : 11, getColor: [235, 235, 235, 230],
+      fontFamily: 'Helvetica Neue, Helvetica, Arial, sans-serif', fontWeight: 'bold', characterSet: 'auto',
+      outlineWidth: 3, outlineColor: [10, 10, 14, 220], fontSettings: {sdf: true},
+      getTextAnchor: 'middle', getAlignmentBaseline: 'center', pickable: false
+    }));
+  }
+  deckgl.setProps({layers});
+  document.getElementById('status').textContent =
+    `${cells.toLocaleString()} hexagons · score ${Math.round(total).toLocaleString()} · souls ${Math.round(souls).toLocaleString()} · zoom ${curZoom.toFixed(1)} · layer ${names.join('+')}`;
+}
+
+function flyTo(lon, lat, zoom) {
+  deckgl.setProps({viewState: {longitude: lon, latitude: lat, zoom, minZoom: 1, maxZoom: 12, pitch: 0, bearing: 0}});
+  scheduleUpdate(zoom);
+}
+
+function setWindow(y0, y1) {
+  document.getElementById('t0').value = Math.round(yearToPos(y0) * 1000);
+  document.getElementById('t1').value = Math.round(yearToPos(y1) * 1000);
+  scheduleUpdate();
+}
+
+['t0','t1','est','op','ocean','names'].forEach(id => document.getElementById(id).addEventListener('input', () => scheduleUpdate()));
+if (Q.get('ocean') === '0') document.getElementById('ocean').checked = false;
+if (Q.get('names') === '0') document.getElementById('names').checked = false;
+document.querySelectorAll('button[data-w]').forEach(b => b.addEventListener('click', () => {
+  const [a, z] = b.dataset.w.split(',').map(Number); setWindow(a, z);
+}));
+
+META.then(m => {
+  if (!window.AVAILABLE && m.layers) AVAILABLE = Object.keys(m.layers);
+  const mx = Math.max(...Object.values(m.layers).map(l => l.score_max || 1));
+  vmax = Math.ceil(Math.log10(mx));
+  const ticks = document.getElementById('ticks');
+  ticks.innerHTML = '';
+  for (let i = 0; i <= vmax; i += Math.max(1, Math.round(vmax / 4))) {
+    const s = document.createElement('span'); s.textContent = '10^' + i; ticks.appendChild(s);
+  }
+  if (Q.has('y0') || Q.has('y1')) setWindow(qn('y0', YMIN), qn('y1', YMAX)); else update();
+});
+</script>
+</body>
+</html>

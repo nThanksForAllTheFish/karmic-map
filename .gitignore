@@ -1,0 +1,16 @@
+# raw downloads: fetched by scripts/fetch_data.sh, licensed by their publishers, not redistributed here
+data/raw/
+
+# build outputs: regenerate with `uv run python3 src/build.py`; only the small viewer layers are kept
+out/*.parquet
+out/viewer/cells_r4.json
+out/viewer/cells_r5.json
+out/viewer/cells_coarse.json
+
+# environment
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+.claude/
+viewer/lib/
